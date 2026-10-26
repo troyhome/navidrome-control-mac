@@ -5,7 +5,7 @@ let navDir = NSHomeDirectory() + "/navidrome"
 let tomlPath = navDir + "/navidrome.toml"
 let plistPath = NSHomeDirectory() + "/Library/LaunchAgents/com.navidrome.plist"
 let logPath = navDir + "/navidrome.log"
-let webURL = URL(string: "http://localhost:4533")!
+var webURL = URL(string: "http://localhost:4533")!
 let toolPATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 @discardableResult
@@ -43,12 +43,12 @@ func pingSync() -> Bool {
     var ok = false
     let sem = DispatchSemaphore(value: 0)
     var req = URLRequest(url: webURL.appendingPathComponent("ping"))
-    req.timeoutInterval = 1.5
+    req.timeoutInterval = 3
     URLSession.shared.dataTask(with: req) { _, resp, _ in
         ok = (resp as? HTTPURLResponse)?.statusCode == 200
         sem.signal()
     }.resume()
-    _ = sem.wait(timeout: .now() + 3)
+    _ = sem.wait(timeout: .now() + 4)
     return ok
 }
 
@@ -95,17 +95,55 @@ final class Model: ObservableObject {
     @Published var hasBinary = false
     @Published var hasConfig = false
     @Published var hasService = false
+    @Published var mode = UserDefaults.standard.string(forKey: "mode") ?? ""
+    @Published var addressInput = UserDefaults.standard.string(forKey: "server") ?? ""
 
     var needsSetup: Bool { return !(hasBinary && hasConfig && hasService) }
 
     init() {
         loadFolder()
         refreshSetup()
+        if mode == "remote" {
+            if let u = URL(string: addressInput), !addressInput.isEmpty {
+                webURL = u
+            } else {
+                mode = ""
+            }
+        }
+        if mode == "" && !needsSetup { setMode("local") }
         poll()
         Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
             self.poll()
             self.refreshSetup()
         }
+    }
+
+    func setMode(_ newMode: String) {
+        mode = newMode
+        UserDefaults.standard.set(newMode, forKey: "mode")
+        if newMode != "remote" { webURL = URL(string: "http://localhost:4533")! }
+        message = ""
+        poll()
+    }
+
+    func connectRemote() {
+        var text = addressInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.isEmpty { message = "Enter your server's address first."; return }
+        let lower = text.lowercased()
+        if !lower.hasPrefix("http://") && !lower.hasPrefix("https://") { text = "http://" + text }
+        while text.hasSuffix("/") { text.removeLast() }
+        guard var url = URL(string: text), url.host != nil else {
+            message = "That address doesn't look right."
+            return
+        }
+        if url.port == nil && url.scheme == "http" {
+            text += ":4533"
+            if let withPort = URL(string: text) { url = withPort }
+        }
+        addressInput = text
+        UserDefaults.standard.set(text, forKey: "server")
+        setMode("remote")
+        webURL = url
     }
 
     func refreshSetup() {
@@ -170,6 +208,11 @@ final class Model: ObservableObject {
 
     func openNavidrome() {
         work("Opening Navidrome...") {
+            if self.mode == "remote" {
+                if !pingSync() { return "Can't reach \(webURL.absoluteString). Is that computer on?" }
+                DispatchQueue.main.async { NSWorkspace.shared.open(webURL) }
+                return "Opened Navidrome in your browser."
+            }
             if !pingSync() {
                 let r = self.startJob()
                 if !pingSync() { return r }
@@ -357,6 +400,9 @@ struct SetupView: View {
             .controlSize(.large)
             .disabled(!canSetUp)
 
+            Button("Back") { m.setMode("") }
+                .disabled(m.busy)
+
             StatusLine(m: m)
         }
         .padding(20)
@@ -445,13 +491,101 @@ struct MainView: View {
     }
 }
 
+struct ChooseView: View {
+    @ObservedObject var m: Model
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Header(subtitle: "Welcome", dot: Color.orange)
+
+            Text("What would you like to do?")
+                .font(.headline)
+
+            Button(action: { m.setMode("local") }) {
+                Label("Set Up Navidrome on This Mac", systemImage: "desktopcomputer")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+
+            GroupBox(label: Text("Or connect to a server I already have")) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Use this if Navidrome runs on another computer. Enter its address, for example my-mac:4533")
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                    TextField("http://my-mac:4533", text: $m.addressInput)
+                        .textFieldStyle(.roundedBorder)
+                    Button(action: { m.connectRemote() }) {
+                        Label("Connect", systemImage: "network").frame(maxWidth: .infinity)
+                    }
+                    .controlSize(.large)
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            StatusLine(m: m)
+        }
+        .padding(20)
+        .frame(width: 460)
+    }
+}
+
+struct RemoteView: View {
+    @ObservedObject var m: Model
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Header(subtitle: m.running ? "Connected to your server" : "Can't reach your server",
+                   dot: m.running ? Color.green : Color.red)
+
+            GroupBox(label: Text("Server address")) {
+                Text(m.addressInput)
+                    .font(.system(.body, design: .monospaced))
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Button(action: { m.openNavidrome() }) {
+                Label("Open Navidrome", systemImage: "play.circle.fill")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(m.busy)
+
+            Button(action: { m.setMode("") }) {
+                Label("Change Server or Set Up Here", systemImage: "arrow.triangle.2.circlepath")
+                    .frame(maxWidth: .infinity)
+            }
+            .controlSize(.large)
+
+            Text("The server is controlled from the computer it runs on.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            StatusLine(m: m)
+        }
+        .padding(20)
+        .frame(width: 460)
+    }
+}
+
 struct ContentView: View {
     @StateObject var m = Model()
     var body: some View {
-        if m.needsSetup {
+        if m.mode == "remote" {
+            RemoteView(m: m)
+        } else if !m.needsSetup {
+            MainView(m: m)
+        } else if m.mode == "local" {
             SetupView(m: m)
         } else {
-            MainView(m: m)
+            ChooseView(m: m)
         }
     }
 }

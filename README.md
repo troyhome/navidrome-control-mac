@@ -19,8 +19,8 @@ Extra music libraries can only be managed inside Navidrome's web interface, so t
 
 1. Download `NavidromeControl.dmg` from the Releases page.
 2. Open it and drag Navidrome Control into Applications.
-3. The first time, right-click the app and choose Open (the app is not signed with a paid Apple developer account).
-4. Choose your music folder and click Set Up Navidrome.
+3. If macOS warns about the app, right-click it and choose Open.
+4. Choose "Set Up Navidrome on This Mac" and pick your music folder, or choose "Connect to a server I already have" if Navidrome runs on another computer.
 
 First-time setup uses [Homebrew](https://brew.sh) to install Navidrome and ffmpeg. Install Homebrew first if you don't have it.
 

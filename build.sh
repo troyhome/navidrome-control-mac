@@ -3,6 +3,8 @@
 # Add --install to also copy it into /Applications.
 set -e
 cd "$(dirname "$0")"
+# Optional signing settings (not committed): SIGN_ID and NOTARY_PROFILE
+[ -f signing.env ] && source signing.env
 APP="dist/Navidrome Control.app"
 SRC="src/NavidromeControl.swift"
 rm -rf "$APP"
@@ -29,8 +31,8 @@ cat > "$APP/Contents/Info.plist" <<'PL'
 <key>CFBundleDisplayName</key><string>Navidrome Control</string>
 <key>CFBundleIconFile</key><string>NavidromeControl</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.1</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>1.2</string>
+<key>CFBundleVersion</key><string>3</string>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSAppTransportSecurity</key>
@@ -38,7 +40,12 @@ cat > "$APP/Contents/Info.plist" <<'PL'
 </dict>
 </plist>
 PL
-codesign --force --sign - "$APP"
+if [ -n "$SIGN_ID" ]; then
+  codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP"
+  echo "Signed with: $SIGN_ID"
+else
+  codesign --force --sign - "$APP"
+fi
 touch "$APP"
 if [ "$1" = "--install" ]; then
   rm -rf "/Applications/Navidrome Control.app"
